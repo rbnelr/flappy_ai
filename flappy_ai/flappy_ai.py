@@ -1,22 +1,67 @@
+from collections import deque
 import pyglet as pg
 import pyglet.gl as gl
 from pyglet.window import key
-from collections import deque
+import noise
+import random
 
 from mymath import *
 
-def draw_rect(pos, size):
-	pg.graphics.draw(4, pg.gl.GL_QUADS, ('v2f', (	pos[0],				pos[1],
-													pos[0] + size[0],	pos[1],
-													pos[0] + size[0],	pos[1] + size[1],
-													pos[0],				pos[1]
-													)))
-#def draw_graph(pos_screen, size, func): # func(x) -> x, y in [0,1]
-#	pg.graphics.draw(4, pg.gl.GL_QUADS, ('v2f', (	pos[0],				pos[1],
-#													pos[0] + size[0],	pos[1],
-#													pos[0] + size[0],	pos[1] + size[1],
-#													pos[0],				pos[1]
-#													)))
+def draw_rect(pos, size, col=(255,30,30,200)):
+	pos = (pos[0] * sprite_scale, pos[1] * sprite_scale)
+	size = (size[0] * sprite_scale, size[1] * sprite_scale)
+	
+	gl.glEnable(gl.GL_BLEND)
+	gl.glBlendFunc(gl.GL_SRC_ALPHA, gl.GL_ONE_MINUS_SRC_ALPHA)
+
+	poss = []
+
+	poss += (pos[0] + size[0],	pos[1]				)
+	poss += (pos[0] + size[0],	pos[1] + size[1]	)
+	poss += (pos[0],			pos[1]				)
+	poss += (pos[0],			pos[1]				)
+	poss += (pos[0] + size[0],	pos[1] + size[1]	)
+	poss += (pos[0],			pos[1] + size[1]	)
+
+	count = len(poss) // 2
+
+	pg.graphics.draw(count, pg.gl.GL_TRIANGLES, ('v2f', poss), ('c4B', col * count))
+
+def draw_circle(pos, size, col=(255,30,30,200)):
+	pos = (pos[0] * sprite_scale, pos[1] * sprite_scale)
+	size = (size[0] * sprite_scale, size[1] * sprite_scale)
+	
+	gl.glEnable(gl.GL_BLEND)
+	gl.glBlendFunc(gl.GL_SRC_ALPHA, gl.GL_ONE_MINUS_SRC_ALPHA)
+
+	poss = []
+
+	poss += (pos[0] + size[0],	pos[1]				)
+	poss += (pos[0] + size[0],	pos[1] + size[1]	)
+	poss += (pos[0],			pos[1]				)
+	poss += (pos[0],			pos[1]				)
+	poss += (pos[0] + size[0],	pos[1] + size[1]	)
+	poss += (pos[0],			pos[1] + size[1]	)
+
+	count = len(poss) // 2
+
+	pg.graphics.draw(count, pg.gl.GL_TRIANGLES, ('v2f', poss), ('c4B', col * count))
+
+def draw_graph(pos_screen, size, func, res=0.2): # func(x) -> x, y in [0,1], res: line segments per pixel
+	
+	lines_pos = []
+
+	count = math.floor(res * size[0])
+	for i in range(0, count):
+		x = i / (count -1)
+		y = func(x)
+
+		lines_pos.append(x * size[0] + pos_screen[0])
+		lines_pos.append(y * size[1] + pos_screen[1])
+		
+	lines_col = (0,0,0,255) * (len(lines_pos) // 2)
+
+	pg.graphics.draw(len(lines_pos) // 2, pg.gl.GL_LINE_STRIP, ('v2f', lines_pos), ('c4B', lines_col))
 
 images = {} # image caching
 
@@ -87,17 +132,69 @@ class Game:
 
 		self.dist = 0
 		self.speed = 70
+		
+		self.noise_seed = random.uniform(0,1000)
+		self.pipe_noise_x = 0
+
+		self.screen_width = ground.width / sprite_scale;
+		self.pipes_seperation = self.screen_width * 0.7
+		self.pipe_gap = 40
 
 		self.pipes = deque()
-		self.pipes.append((150, 100))
-		self.pipes.append((250, 140))
-		self.pipes.append((350, 90))
 
 		self._dbg_t = 0
+		
+	def need_to_gen_pipe_x(self):
+		
+		if len(self.pipes) == 0:
+			gen_pipe = True
+			next_pipe_x = 150
+		else:
+			last_pipe_x = self.pipes[-1][0]
+			next_pipe_x = last_pipe_x + self.pipes_seperation
+		
+			# generate next pipe when it enters to the right of the screen
+			pipe_left = next_pipe_x
+
+			gen_pipe = self.dist + self.screen_width >= pipe_left
+
+		return gen_pipe, next_pipe_x
+	def pipe_left_screen(self, pipe):
+		pipe_right = pipe[0] + (pipe_top.width /sprite_scale)
+		return self.dist > pipe_right
+
+	# generate height of tube based on perlin/simplex noise to keep tubes from looking too random
+	#  noise_x should be continous, increate by 1 per tube or by 1.5, 2, etc. to increase the frequency of the variation to vary difficulty after a time
+	def random_pipe_height(self, noise_x): # 
+		
+		#rand = abs(noise_x % 2 -1) * 2 -1 # [-1,1]
+		rand = noise.snoise2(noise_x, self.noise_seed)
+
+		lowest = ground.height/sprite_scale + self.pipe_gap/2 + 10
+		highest = 192 - self.pipe_gap/2 - 10
+
+		return map(rand, -1,1, lowest,highest)
+	
+	def update_pipes(self):
+		while len(self.pipes) > 0 and self.pipe_left_screen(self.pipes[0]):
+			self.pipes.popleft()
+
+		while True:
+			gen_pipe, next_pipe_x = self.need_to_gen_pipe_x()
+
+			if not gen_pipe:
+				break
+			
+			y = self.random_pipe_height(self.pipe_noise_x)
+			self.pipes.append((next_pipe_x, y))
+
+			self.pipe_noise_x += self.pipes_seperation / self.screen_width
 
 	def update(self, dt):
 
 		self.dist += self.speed * dt
+
+		self.update_pipes()
 
 		if self.flappy_y < 80 and self.flappy_vel_y < 0:
 			self.jump()
@@ -107,6 +204,7 @@ class Game:
 		self.flappy_vel_y = max(self.flappy_vel_y, -1500)
 
 		self.flappy_y += self.flappy_vel_y * dt
+		self.flappy_y = clamp(self.flappy_y, -500, +1000)
 
 		self.flappy_t_since_jump += dt
 		
@@ -124,13 +222,16 @@ class Game:
 
 	def draw_pipes(self):
 		
-		def draw_pipe(x, gap_y, gap=40):
+		def draw_pipe(x, gap_y, gap):
 			draw_sprite(pipe_top,		(x, gap_y + gap/2))
 			draw_sprite(pipe_bottom,	(x, gap_y - gap/2))
 
-		for pipe in self.pipes:
-			draw_pipe(pipe[0] - self.dist, pipe[1])
+			#draw_rect((x, gap_y + gap/2), (pipe_top.width /sprite_scale, 9999))
+			#draw_rect((x, gap_y - gap/2 -9999), (pipe_top.width /sprite_scale, 9999))
 
+		for pipe in self.pipes:
+			draw_pipe(pipe[0] - self.dist, pipe[1], self.pipe_gap)
+	
 	def draw(self):
 		wnd.clear()
 	
@@ -148,15 +249,17 @@ class Game:
 		self.draw_pipes()
 
 		#
-		screen_width = ground.width / sprite_scale;
-		ground_x = -(self.dist % screen_width)
+		ground_x = -(self.dist % self.screen_width)
 
 		draw_sprite(ground, (ground_x, 0))
-		draw_sprite(ground, (ground_x +screen_width, 0))
+		draw_sprite(ground, (ground_x +self.screen_width, 0))
 
 		#
 		ldist.text = "dist: %4d" % self.dist
 		ldist.draw()
+
+		#draw_graph((0,0), (wnd.width, wnd.height), lambda x:
+		#	 self.random_pipe_height(x + self.dist/self.screen_width) / (wnd.height/sprite_scale))
 
 	def jump(self):
 		self.flappy_vel_y = self.flappy_jump_vel_y
