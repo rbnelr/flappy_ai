@@ -63,8 +63,11 @@ pipe_bottom = load_sprite("pipe.png", flip_y=True)
 
 #test = load_sprite("test.png", relative_scale=2, origin=(16,16))
 
-ldist = pg.text.Label(y = background.height -24, font_name="Consolas", font_size=18, color=(0,0,0,255))
+ldist = pg.text.Label(y = background.height -24, font_name="Consolas", font_size=20, color=(0,0,0,255))
 lscore = pg.text.Label(y = ldist.y -20, font_name="Consolas", font_size=20, color=(0,0,0,255))
+
+lrestart = pg.text.Label(text="[R]       Restart", y = ldist.y -54, font_name="Consolas", font_size=20, color=(0,0,0,255))
+ljumpkey = pg.text.Label(text="[Any Key] Flap Wings", y = ldist.y -78, font_name="Consolas", font_size=20, color=(0,0,0,255))
 
 wnd = pg.window.Window(width=background.width, height=background.height, caption="Flappy AI")
 
@@ -223,7 +226,7 @@ class Game:
 
 	def update(self, dt):
 
-		self.dist += self.speed * dt
+		self.dist += self.speed * dt# * (0.3 if self.state != "playing" else 1)
 
 		self.update_pipes()
 		
@@ -297,14 +300,14 @@ class Game:
 		#
 		ldist.text = "dist: %4d" % self.dist_score
 		ldist.draw()
-
+		
 		lscore.text = "score: %3d" % self.score
 		lscore.draw()
+		
+		lrestart.draw()
+		ljumpkey.draw()
 
-		#draw_graph((0,0), (wnd.width, wnd.height), lambda x:
-		#	 self.random_pipe_height(x + self.dist/self.screen_width) / (wnd.height/sprite_scale))
-
-		self.dbg_draw_colliders()
+		#self.dbg_draw_colliders()
 
 #########
 
