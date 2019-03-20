@@ -1,4 +1,6 @@
 from collections import deque
+from enum import Enum
+
 import pyglet as pg
 import pyglet.gl as gl
 from pyglet.window import key
@@ -72,21 +74,26 @@ ljumpkey = pg.text.Label(text="[Any Key] Flap Wings", y = ldist.y -78, font_name
 wnd = pg.window.Window(width=background.width, height=background.height, caption="Flappy AI")
 
 ###########
+class Player:
+	class State(Enum):
+		playing = 0
+		crashing = 1
+		crashed = 2
 
 class Game:
 	def __init__(self):
 		self.reset()
 
 	def reset(self):
-		self.initial_flappy_x = 46
-		self.flappy_x = self.initial_flappy_x
+		self.playing_flappy_x = 46 # where flappy is while player is playing (when player has )
+		self.flappy_x = self.playing_flappy_x
 
 		self.flappy_jump_vel_y = 120
 
 		self.flappy_y = 100.0
 		self.flappy_vel_y = self.flappy_jump_vel_y / 2
 
-		self.state = "playing"
+		self.state = Player.State.playing
 
 		self.flappy_t_since_jump = 0
 
@@ -169,7 +176,7 @@ class Game:
 
 			self.pipe_noise_x += self.pipes_seperation / self.screen_width
 			
-		if self.state == "playing":
+		if self.state == Player.State.playing:
 			for pipe in self.pipes:
 				if not pipe.passed and self.dist + self.flappy_x >= pipe.x + self.pipe_w / 2:
 					pipe.passed = True
@@ -182,7 +189,7 @@ class Game:
 
 		colliding = collision.check(flappy_collider, ground_collider)
 		
-		if self.state == "playing":
+		if self.state == Player.State.playing:
 			for pipe in self.pipes:
 
 				x = pipe.x - self.dist
@@ -193,13 +200,13 @@ class Game:
 				colliding = colliding or collision.check(flappy_collider, pipe_top_collider)
 				colliding = colliding or collision.check(flappy_collider, pipe_bottom_collider)
 
-		if self.state == "playing" and colliding:
-			self.state = "crashing"
+		if self.state == Player.State.playing and colliding:
+			self.state = Player.State.crashing
 			self.collided_dist = self.dist
 			self.flappy_vel_y = self.flappy_jump_vel_y * 0.3
 
-		elif self.state == "crashing" and colliding:
-			self.state = "crashed"
+		elif self.state == Player.State.crashing and colliding:
+			self.state = Player.State.crashed
 		
 		# prevent flappy from penetration ground
 		self.flappy_y = max(self.flappy_y, ground_collider.max[1] + flappy_collider.size[1])
@@ -213,7 +220,7 @@ class Game:
 
 		colliding = collision.check(flappy_collider, ground_collider)
 		
-		if self.state == "playing":
+		if self.state == Player.State.playing:
 			for pipe in self.pipes:
 				x = pipe.x - self.dist
 
@@ -226,11 +233,11 @@ class Game:
 
 	def update(self, dt):
 
-		self.dist += self.speed * dt# * (0.3 if self.state != "playing" else 1)
+		self.dist += self.speed * dt# * (0.3 if self.state != Player.State.playing else 1)
 
 		self.update_pipes()
 		
-		if self.state != "crashed":
+		if self.state != Player.State.crashed:
 			self.flappy_vel_y += self.grav_accel * dt
 
 			self.flappy_vel_y = max(self.flappy_vel_y, -1500)
@@ -240,10 +247,10 @@ class Game:
 
 			self.collide_flappy()
 		
-		if self.state != "playing":
-			self.flappy_x = self.initial_flappy_x + self.collided_dist - self.dist
+		if self.state != Player.State.playing:
+			self.flappy_x = self.playing_flappy_x + self.collided_dist - self.dist
 			
-		if self.state == "playing":
+		if self.state == Player.State.playing:
 			self.dist_score = self.dist
 
 		self.flappy_t_since_jump += dt
@@ -251,7 +258,7 @@ class Game:
 		self._dbg_t += dt
 
 	def jump(self):
-		if self.state == "playing":
+		if self.state == Player.State.playing:
 			self.flappy_vel_y = self.flappy_jump_vel_y
 
 			self.flappy_t_since_jump = 0
