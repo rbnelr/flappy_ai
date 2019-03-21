@@ -1,4 +1,4 @@
-from collections import deque
+from collections import deque, namedtuple
 from enum import Enum
 
 import pyglet as pg
@@ -68,27 +68,34 @@ pipe_bottom = load_sprite("pipe.png", flip_y=True)
 
 #test = load_sprite("test.png", relative_scale=2, origin=(16,16))
 
-ldist = pg.text.Label(y = background.height -24, font_name="Consolas", font_size=20, color=(0,0,0,255))
-lscore = pg.text.Label(y = ldist.y -20, font_name="Consolas", font_size=20, color=(0,0,0,255))
+text_rows = {}
 
-lrestart = pg.text.Label(text="[R]       Restart", y = ldist.y -54, font_name="Consolas", font_size=20, color=(0,0,0,255))
-ljumpkey = pg.text.Label(text="[Any Key] Flap Wings", y = ldist.y -78, font_name="Consolas", font_size=20, color=(0,0,0,255))
+def gen_text_rows():
+	ls = []
+	for row, text in text_rows.items():
+		ls.append( pg.text.Label(text=text, y = background.height -24 * (row +1), font_name="Consolas", font_size=20, color=(0,0,0,255)) )
+	return ls
 
 wnd = pg.window.Window(width=background.width, height=background.height, caption="Flappy AI")
 
 ###########
 class Player:
-	class Input:
+	class Control:
 		def __init__(self):
 			self.jump = False
+
+			self.fitness = 0
+
+		def update(self, dt, ai_vision):
+			pass
 
 	class State(Enum):
 		playing = 0
 		crashing = 1
 		crashed = 2
 
-	def __init__(self, playing_flappy_x, initial_vel_y, input):
-		self.input = input
+	def __init__(self, playing_flappy_x, initial_vel_y, control):
+		self.control = control
 
 		self.state = Player.State.playing
 
@@ -102,6 +109,7 @@ class Player:
 
 		self.dist_score = 0
 		self.score = 0
+		self.crash_near_hole_ratio = 0
 		
 	def score_point(self):
 		self.score += 1
@@ -116,58 +124,22 @@ class Player:
 		
 		return lerp(-60,0, t)
 
-human_input = Player.Input()
+human_player = Player.Control()
 
-class RandomJumper(Player.Input):
-	random_index = 0
-	
-	def __init__(self):
-		super(RandomJumper, self).__init__()
+####
+AI_Vision = namedtuple("AI_Vision", "prev_dist_x dist_x dist_yl dist_yh")
 
-		self.rand = random.Random(RandomJumper.random_index)
+import neat_algo
 
-		RandomJumper.random_index += 1
-
-		self.t_to_jump = self.rand.uniform(0.2, 0.8)
-
-	def update(self, dt):
-		self.t_to_jump -= dt
-		
-		if self.t_to_jump <= 0:
-			self.t_to_jump = self.rand.uniform(0.2, 0.8)
-
-			self.jump = True
-
-class Game:
-	def __init__(self):
-		self.reset()
-
-	def reset(self):
+class Game_Round:
+	def __init__(self, player_inputs, generation=None):
 		self.playing_flappy_x = 46 # where flappy is while player is playing (when player is crashing/crashed his x  )
 		
 		self.flappy_jump_vel_y = 120
 		
-		# Player creation
-		self.players = []
-		def new_player(*args, **kwargs):
-			pl = Player(self.playing_flappy_x, self.flappy_jump_vel_y / 2, *args, **kwargs)
-			self.players.append( pl )
-			return pl
+		self.players = [ Player(self.playing_flappy_x, self.flappy_jump_vel_y / 2, inp) for inp in player_inputs ]
 
-		self.player_controlled = None
-
-		human_player = True
-		if human_player:
-			self.player_controlled = new_player(human_input)
-
-		for i in range(10):
-			ai = RandomJumper()
-
-			pl = new_player(ai)
-			pl.ai = ai
-
-		self.displayed_player = self.player_controlled if self.player_controlled else self.players[0]
-		#
+		self.displayed_player = self.players[0] if len(self.players) > 0 else None
 
 		self.grav_accel = -400
 
@@ -178,6 +150,7 @@ class Game:
 		self.pipe_noise_x = 0
 
 		self.screen_width = ground.width / sprite_scale;
+		self.screen_height = background.height / sprite_scale;
 		self.pipes_seperation = self.screen_width * 0.7 # 0.7
 		self.pipe_gap = 40 # 40
 
@@ -185,10 +158,13 @@ class Game:
 
 		self.pipes = deque()
 
+		self.generation = generation
+
 		self._dbg_t = 0
 		
 	def need_to_gen_pipe_x(self):
-		
+		#return False, 0 # disable pipes
+
 		if len(self.pipes) == 0:
 			gen_pipe = True
 			next_pipe_x = 150
@@ -241,13 +217,19 @@ class Game:
 
 			self.pipe_noise_x += self.pipes_seperation / self.screen_width
 		
-		for player in self.players:
-			if player.state == Player.State.playing:
-				for pipe in self.pipes:
-					if not pipe.passed and self.dist + player.x >= pipe.x + self.pipe_w / 2:
-						pipe.passed = True
-						player.score_point()
-	
+		for pipe in self.pipes:
+			if not pipe.passed and self.dist + self.playing_flappy_x >= pipe.x + self.pipe_w / 2:
+				pipe.passed = True
+			
+				for player in self.players:
+					if player.state == Player.State.playing:
+						player.score_point() # alive players get point if they passed pipe
+
+		
+
+	def players_crashed(self):
+		return (pl.state == Player.State.crashed for pl in self.players)
+
 	def collide_flappy(self, player):
 		flappy_collider = collision.AAEllipse(pos=(player.x, player.y), size=(9 * flappy_body.scale_x / sprite_scale, 8.5 * flappy_body.scale_y / sprite_scale))
 		
@@ -255,7 +237,10 @@ class Game:
 
 		colliding = collision.check(flappy_collider, ground_collider)
 		
-		if player.state == Player.State.playing:
+		if colliding and player.state == Player.State.playing:
+			player.crash_near_hole_ratio = 0
+		
+		if not colliding and player.state == Player.State.playing:
 			for pipe in self.pipes:
 
 				x = pipe.x - self.dist
@@ -265,6 +250,10 @@ class Game:
 				
 				colliding = colliding or collision.check(flappy_collider, pipe_top_collider)
 				colliding = colliding or collision.check(flappy_collider, pipe_bottom_collider)
+
+				if colliding and player.state == Player.State.playing:
+					player.crash_near_hole_ratio = 1 - (abs(player.y -pipe.y) / self.screen_height)
+					break
 
 		if player.state == Player.State.playing and colliding:
 			player.state = Player.State.crashing
@@ -297,41 +286,62 @@ class Game:
 
 		for flappy_collider in flappy_colliders:
 			draw_circle((flappy_collider.pos[0] * sprite_scale, flappy_collider.pos[1] * sprite_scale), (flappy_collider.size[0] * sprite_scale, flappy_collider.size[1] * sprite_scale), col = (255,255,40,180) if colliding else (40,255,40,180))
-
+	
 	def update(self, dt):
 
 		self.dist += self.speed * dt
 
 		self.update_pipes()
 		
-		for player in self.players:
-			if player.state != Player.State.crashed:
-				
-				if hasattr(player, "ai"):
-					player.ai.update(dt)
-				
-				if player.input.jump:
-					player.vel_y = self.flappy_jump_vel_y
-
-					player.t_since_jump = 0
-				player.input.jump = False
-
-				player.vel_y += self.grav_accel * dt
-
-				player.vel_y = max(player.vel_y, -1500)
-
-				player.y += player.vel_y * dt
-				player.y = clamp(player.y, -500, +1000)
-
-				self.collide_flappy(player)
+		next_pipe = -1
+		for i, pipe in enumerate(self.pipes):
+			if ((pipe.x - self.dist) - self.playing_flappy_x) > 0:
+				next_pipe = i
+				break
 		
-			if player.state != Player.State.playing:
-				player.x = self.playing_flappy_x + player.collided_dist - self.dist
-			
-			if player.state == Player.State.playing:
-				player.dist_score = self.dist
+		prev_pipe = self.pipes[next_pipe-1] if next_pipe > 0 else None
+		next_pipe = self.pipes[next_pipe] if next_pipe >= 0 else None
 
-			player.t_since_jump += dt
+		for pl in self.players:
+			ai_vision = AI_Vision(
+					(next_pipe.x - self.dist) - pl.x				if next_pipe else +math.inf,
+					(prev_pipe.x - self.dist) - pl.x + self.pipe_w 	if prev_pipe else -math.inf,
+					pl.y - (next_pipe.y - next_pipe.gap/2)			if next_pipe else -math.inf,
+					pl.y - (next_pipe.y + next_pipe.gap/2)			if next_pipe else +math.inf,
+				)
+
+			
+			pl.control.update(dt, ai_vision)
+			
+			if pl is self.displayed_player:
+				self.displ_ai_vision = ai_vision
+
+			if pl.state != Player.State.crashed:
+				
+				if pl.control.jump and pl.state == Player.State.playing:
+					pl.vel_y = self.flappy_jump_vel_y
+					
+					pl.t_since_jump = 0
+				pl.control.jump = False
+
+				pl.vel_y += self.grav_accel * dt
+
+				pl.vel_y = max(pl.vel_y, -1500)
+
+				pl.y += pl.vel_y * dt
+				pl.y = clamp(pl.y, -500, +1000)
+
+				self.collide_flappy(pl)
+		
+			if pl.state != Player.State.playing:
+				pl.x = self.playing_flappy_x + pl.collided_dist - self.dist
+			
+			if pl.state == Player.State.playing:
+				pl.dist_score = math.floor(self.dist / 10)
+				
+			pl.control.fitness = neat_algo.calc_fitness(pl.score, pl.dist_score, pl.state != Player.State.playing, pl.crash_near_hole_ratio)
+
+			pl.t_since_jump += dt
 		
 		self._dbg_t += dt
 
@@ -375,38 +385,99 @@ class Game:
 		draw_sprite(ground, (ground_x +self.screen_width, 0))
 
 		#
-		ldist.text = "dist: %4d" % self.displayed_player.dist_score
-		ldist.draw()
+		text_rows[0] = "dist: %4d" % self.displayed_player.dist_score
+		text_rows[1] = "score: %3d" % self.displayed_player.score
+		text_rows[2] = "fitness: %3.2f" % self.displayed_player.control.fitness
+		text_rows[3] = "cnhr: %1.2f" % self.displayed_player.crash_near_hole_ratio
 		
-		lscore.text = "score: %3d" % self.displayed_player.score
-		lscore.draw()
+		text_rows[4] = "[R]       Restart"
+		text_rows[5] = "[Any Key] Flap Wings"
+
+		text_rows[6] = "generation: %3d" % self.generation
 		
-		lrestart.draw()
-		ljumpkey.draw()
+		text_rows[7] = "dist x: %3.2f pdist x: %3.2f  dist yl: %3.2f dist yh: %3.2f" % self.displ_ai_vision if hasattr(self, "displ_ai_vision") else ("-")*3
+		
+		try:
+			text_rows[8] = "act: %1.2f thrs: %1.2f" % (self.displayed_player.control.jump_act, self.displayed_player.control.jump_thres)
+		except:
+			pass
+
+		for l in gen_text_rows():
+			l.draw()
 
 		#self.dbg_draw_colliders()
 
 #########
 
-game = Game()
+class Evolved_AI(Player.Control):
+	
+	def __init__(self, nn):
+		super(Evolved_AI, self).__init__()
+
+		self.t_since_jump = 0
+		self.nn = nn
+		
+	def update(self, dt, ai_vision):
+		self.jump_act = self.nn.activate(ai_vision)[0]
+		
+		self.jump_thres = 1.0 / (6 * self.t_since_jump + 1) # output neuron actiovations needs to be less to trigger a jump the longer a jump was not triggered
+		# this should allow the output neuron to get frequency control over jumping instead of binary control (binary = never jump / jump every frame)
+
+		#if self.jump_act >= self.jump_thres:
+		#	self.jump = True
+		#	self.t_since_jump = 0
+
+		if self.jump_act >= 0.5:
+			self.jump = True
+			self.t_since_jump = 0
+
+		self.t_since_jump += dt
+
+class App:
+	def __init__(self):
+		self.generation = 0
+		self.new_round()
+
+	def new_round(self):
+
+		fitnesses = [ ai.fitness for ai in self.ai_players ] if hasattr(self, "ai_players") else None
+		self.ai_players = [ Evolved_AI(nn) for nn in neat_algo.evolution_step(fitnesses) ]
+
+		self.players = []
+		#self.players += [human_player]
+		self.players += self.ai_players
+
+		self.round = Game_Round(self.players, self.generation)
+		
+	def update(self, dt):
+		self.round.update(dt)
+
+		if all( self.round.players_crashed() ):
+			self.generation += 1
+			self.new_round()
+
+	def draw(self):
+		self.round.draw()
+
+app = App()
 
 def update(dt):
-	game.update(1 / 60) # fixed dt to allow speeing up game
+	app.update(1 / 60) # fixed dt to allow speeing up game
 
 @wnd.event
 def on_draw():
-	game.draw()
+	app.draw()
 
 @wnd.event
 def on_key_press(symbol, modifiers):
 	if symbol == key.R:
-		game.reset()
+		app.new_round()
 	else:
-		human_input.jump = True
+		human_player.jump = True
 		
 @wnd.event
 def on_mouse_press(x, y, button, modifiers):
-	human_input.jump = True
+	human_player.jump = True
 
 pg.clock.schedule_interval(update, 1 / 60)
 

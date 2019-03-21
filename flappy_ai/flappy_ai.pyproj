@@ -32,6 +32,15 @@
     <Compile Include="mymath.py">
       <SubType>Code</SubType>
     </Compile>
+    <Compile Include="neat_algo.py">
+      <SubType>Code</SubType>
+    </Compile>
+    <Compile Include="neat_config.py">
+      <SubType>Code</SubType>
+    </Compile>
+    <Compile Include="neat_manual_looping.py">
+      <SubType>Code</SubType>
+    </Compile>
   </ItemGroup>
   <ItemGroup>
     <InterpreterReference Include="Global|VisualStudio|Manual Python 3.6 with debug bins" />
