@@ -8,9 +8,8 @@ config = neat.Config(	neat.DefaultGenome, neat.DefaultReproduction,
 pop = neat.Population(config)
 
 pop.add_reporter(neat.StdOutReporter(True))
-stats = neat.StatisticsReporter()
-pop.add_reporter(stats)
-pop.add_reporter(neat.Checkpointer(5))
+pop.add_reporter(neat.StatisticsReporter())
+#pop.add_reporter(neat.Checkpointer(5))
 
 #node_names = { -1:'Dist to pipe x', -2:'Dist to pipe bottom y', -3:'Dist to pipe top y', 0:'jump' }
 #

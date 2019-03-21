@@ -70,11 +70,17 @@ pipe_bottom = load_sprite("pipe.png", flip_y=True)
 
 text_rows = {}
 
+labels_batch = pg.graphics.Batch()
+
+_labels_cache = {}
 def gen_text_rows():
-	ls = []
 	for row, text in text_rows.items():
-		ls.append( pg.text.Label(text=text, y = background.height -24 * (row +1), font_name="Consolas", font_size=20, color=(0,0,0,255)) )
-	return ls
+		if row not in _labels_cache:
+			_labels_cache[row] = pg.text.Label(font_name="Consolas", font_size=14, color=(0,0,0,255), batch=labels_batch)
+		l = _labels_cache[row]
+
+		l.text = text
+		l.y = background.height -16 * (row +1)
 
 wnd = pg.window.Window(width=background.width, height=background.height, caption="Flappy AI")
 
@@ -106,6 +112,7 @@ class Player:
 		self.vel_y = initial_vel_y
 
 		self.t_since_jump = 0
+		self.t_since_crashed = 0
 
 		self.dist_score = 0
 		self.score = 0
@@ -127,7 +134,7 @@ class Player:
 human_player = Player.Control()
 
 ####
-AI_Vision = namedtuple("AI_Vision", "prev_dist_x dist_x dist_yl dist_yh")
+AI_Vision = namedtuple("AI_Vision", "prev_dist_x dist_x y dist_yl dist_yh")
 
 import neat_algo
 
@@ -139,7 +146,7 @@ class Game_Round:
 		
 		self.players = [ Player(self.playing_flappy_x, self.flappy_jump_vel_y / 2, inp) for inp in player_inputs ]
 
-		self.displayed_player = self.players[0] if len(self.players) > 0 else None
+		self.displayed_player = self.players[0] if self.players else None
 
 		self.grav_accel = -400
 
@@ -306,6 +313,7 @@ class Game_Round:
 			ai_vision = AI_Vision(
 					(next_pipe.x - self.dist) - pl.x				if next_pipe else +math.inf,
 					(prev_pipe.x - self.dist) - pl.x + self.pipe_w 	if prev_pipe else -math.inf,
+					pl.y,
 					pl.y - (next_pipe.y - next_pipe.gap/2)			if next_pipe else -math.inf,
 					pl.y - (next_pipe.y + next_pipe.gap/2)			if next_pipe else +math.inf,
 				)
@@ -338,11 +346,19 @@ class Game_Round:
 			
 			if pl.state == Player.State.playing:
 				pl.dist_score = math.floor(self.dist / 10)
+
+			if pl.state == Player.State.crashed:
+				pl.t_since_crashed += dt
 				
 			pl.control.fitness = neat_algo.calc_fitness(pl.score, pl.dist_score, pl.state != Player.State.playing, pl.crash_near_hole_ratio)
 
 			pl.t_since_jump += dt
 		
+		self.players[:] = [x for x in self.players if x.t_since_crashed < 2] # remove players who have crashed from simulation and drawing after a short while
+
+		active_players = [p for p in self.players if p.state == Player.State.playing]
+		self.displayed_player = active_players[0] if active_players else None # update displayed player
+
 		self._dbg_t += dt
 
 	def draw_pipes(self):
@@ -367,13 +383,12 @@ class Game_Round:
 
 			draw_sprite(flappy_body, (player.x,player.y), ori=ori, alpha=alpha) # rotate body and wings around same axis, so that they match up
 			draw_sprite(flappy_wings, (player.x,player.y), ori=ori + wing_ori, alpha=alpha)
+		
+		for player in (p for p in self.players[0:30] if p is not self.displayed_player):
+			draw_player(player, 80)
 
-		for player in self.players:
-			if player is not self.displayed_player:
-				draw_player(player, 80)
-		for player in self.players:
-			if player is self.displayed_player:
-				draw_player(player, 255)
+		if self.displayed_player:
+			draw_player(self.displayed_player, 255)
 		
 		#
 		self.draw_pipes()
@@ -385,25 +400,30 @@ class Game_Round:
 		draw_sprite(ground, (ground_x +self.screen_width, 0))
 
 		#
-		text_rows[0] = "dist: %4d" % self.displayed_player.dist_score
-		text_rows[1] = "score: %3d" % self.displayed_player.score
-		text_rows[2] = "fitness: %3.2f" % self.displayed_player.control.fitness
-		text_rows[3] = "cnhr: %1.2f" % self.displayed_player.crash_near_hole_ratio
-		
-		text_rows[4] = "[R]       Restart"
-		text_rows[5] = "[Any Key] Flap Wings"
-
-		text_rows[6] = "generation: %3d" % self.generation
-		
-		text_rows[7] = "dist x: %3.2f pdist x: %3.2f  dist yl: %3.2f dist yh: %3.2f" % self.displ_ai_vision if hasattr(self, "displ_ai_vision") else ("-")*3
+		try:
+			text_rows[0] = "dist: %4d"			% self.displayed_player.dist_score
+			text_rows[1] = "score: %3d"			% self.displayed_player.score
+			text_rows[2] = "fitness: %3.2f"		% self.displayed_player.control.fitness
+			text_rows[3] = "cnhr: %1.2f"		% self.displayed_player.crash_near_hole_ratio
+		except:
+			pass
 		
 		try:
-			text_rows[8] = "act: %1.2f thrs: %1.2f" % (self.displayed_player.control.jump_act, self.displayed_player.control.jump_thres)
+			text_rows[4] = "act: %1.2f thrs: %1.2f" % (displayed_player().control.jump_act, displayed_player().control.jump_thres)
 		except:
 			pass
 
-		for l in gen_text_rows():
-			l.draw()
+		text_rows[5] = "[R]       Restart"
+		text_rows[6] = "[Any Key] Flap Wings"
+
+		text_rows[7] = "generation: %3d" % self.generation
+
+		text_rows[8] = "active players: %3d" % sum(p.state == Player.State.playing for p in self.players)
+		
+		text_rows[9] = "dist x: %3.2f pdist x: %3.2f  y: %3.2f dist yl: %3.2f dist yh: %3.2f" % self.displ_ai_vision if hasattr(self, "displ_ai_vision") else ("-")*3
+		
+		gen_text_rows()
+		labels_batch.draw()
 
 		#self.dbg_draw_colliders()
 
@@ -435,10 +455,11 @@ class Evolved_AI(Player.Control):
 
 class App:
 	def __init__(self):
-		self.generation = 0
+		self.generation = -1
 		self.new_round()
 
 	def new_round(self):
+		self.generation += 1
 
 		fitnesses = [ ai.fitness for ai in self.ai_players ] if hasattr(self, "ai_players") else None
 		self.ai_players = [ Evolved_AI(nn) for nn in neat_algo.evolution_step(fitnesses) ]
@@ -453,7 +474,6 @@ class App:
 		self.round.update(dt)
 
 		if all( self.round.players_crashed() ):
-			self.generation += 1
 			self.new_round()
 
 	def draw(self):
@@ -462,6 +482,8 @@ class App:
 app = App()
 
 def update(dt):
+
+	#for i in range(1):
 	app.update(1 / 60) # fixed dt to allow speeing up game
 
 @wnd.event
@@ -482,3 +504,6 @@ def on_mouse_press(x, y, button, modifiers):
 pg.clock.schedule_interval(update, 1 / 60)
 
 pg.app.run()
+
+#import cProfile
+#cProfile.run('pg.app.run()', sort="cumtime")
