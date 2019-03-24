@@ -134,9 +134,8 @@ class Player:
 human_player = Player.Control()
 
 ####
-AI_Vision = namedtuple("AI_Vision", "prev_dist_x dist_x y dist_yl dist_yh")
-
 import neat_algo
+from neat_algo import AI_Perceptrons
 
 class Game_Round:
 	def __init__(self, player_inputs, generation=None):
@@ -310,7 +309,7 @@ class Game_Round:
 		next_pipe = self.pipes[next_pipe] if next_pipe >= 0 else None
 
 		for pl in self.players:
-			ai_vision = AI_Vision(
+			ai_vision = AI_Perceptrons(
 					(next_pipe.x - self.dist) - pl.x				if next_pipe else +math.inf,
 					(prev_pipe.x - self.dist) - pl.x + self.pipe_w 	if prev_pipe else -math.inf,
 					pl.y,

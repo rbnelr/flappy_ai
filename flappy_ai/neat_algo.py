@@ -1,9 +1,16 @@
+from collections import namedtuple
+
 import neat
 import random
+
+perceptron_names = [ "prev_dist_x", "dist_x", "y", "dist_yl", "dist_yh" ]
+AI_Perceptrons = namedtuple("AI_Perceptrons", perceptron_names)
+
 
 config = neat.Config(	neat.DefaultGenome, neat.DefaultReproduction,
 						neat.DefaultSpeciesSet, neat.DefaultStagnation,
 						"neat_config.py" )
+#config.genome_config.input_keys = perceptron_names
 
 pop = neat.Population(config)
 
